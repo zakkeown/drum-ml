@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Data & artifacts (never commit datasets or weights).
+# Anchored to repo root so they don't match the src/drumml/data package.
+/data/
+/datasets/
+/checkpoints/
+/runs/
+*.wav
+*.flac
+*.mp3
+*.npy
+*.ckpt
+*.pt
+
+# OS
+.DS_Store
