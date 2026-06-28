@@ -53,6 +53,7 @@ class AccompanimentMixer:
         *,
         prob: float = 0.7,
         seed: int = 0,
+        max_load_seconds: float = 30.0,
     ):
         self.accompaniment_dir = Path(accompaniment_dir)
         self.paths = sorted(self.accompaniment_dir.glob("*.wav"))
@@ -60,6 +61,10 @@ class AccompanimentMixer:
         if self.snr_db_choices.size == 0:
             self.snr_db_choices = np.array([0.0], dtype=np.float32)
         self.prob = float(prob)
+        # Cap per-file load length: full MUSDB tracks (~42 MB mono each) cached
+        # across many DataLoader workers would OOM; 30 s/file still gives ample
+        # distinct 2 s windows (~14/file x 150 files) for accompaniment variety.
+        self.max_load_seconds = float(max_load_seconds)
         self._rng = np.random.default_rng(seed)
         self._cache: dict[Path, np.ndarray] = {}
 
@@ -68,7 +73,11 @@ class AccompanimentMixer:
         if cached is None:
             import soundfile as sf  # lazy
 
-            wav, _ = sf.read(str(path), dtype="float32", always_2d=False)
+            n_frames = -1
+            if self.max_load_seconds > 0:
+                sr = sf.info(str(path)).samplerate
+                n_frames = int(self.max_load_seconds * sr)
+            wav, _ = sf.read(str(path), dtype="float32", always_2d=False, frames=n_frames)
             wav = np.asarray(wav)
             if wav.ndim > 1:
                 wav = wav.mean(axis=1)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Precompute drum-free accompaniment + empirical SNRs from MUSDB18(-HQ) stems.
+"""Precompute drum-free accompaniment + empirical SNRs from MUSDB18 stems.
 
 For each MUSDB track, sum the non-drum stems (bass + other + vocals) into a mono
 accompaniment wav, and record the real drums-vs-accompaniment loudness ratio
@@ -8,11 +8,14 @@ accompaniment wav, and record the real drums-vs-accompaniment loudness ratio
 training mixes span the real range -- including accompaniment-as-loud-as-drums,
 which is what teaches the model to ignore non-drum energy.
 
-Expects the MUSDB18-HQ wav layout: ``<root>/**/<track>/{drums,bass,other,vocals}.wav``.
+Reads either layout, auto-detected:
+* MUSDB18-HQ wav: ``<root>/**/<track>/{drums,bass,other,vocals}.wav`` (soundfile).
+* MUSDB18 mp4 STEMS: ``<root>/{train,test}/*.stem.mp4`` via the ``musdb`` package
+  (needs ``musdb``/``stempeg``/ffmpeg).
 
 Example:
-    uv run python scripts/prep_accompaniment.py \\
-        --musdb-root datasets/musdb18hq --out-dir datasets/musdb_accompaniment
+    uv run --with musdb python scripts/prep_accompaniment.py \\
+        --musdb-root datasets/musdb18 --out-dir datasets/musdb_accompaniment
 """
 
 from __future__ import annotations
@@ -21,22 +24,57 @@ import argparse
 import json
 import math
 from pathlib import Path
+from typing import Iterator
 
 import numpy as np
+
+
+def _mono(x: np.ndarray) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float32)
+    return x.mean(axis=1) if x.ndim > 1 else x
 
 
 def _load_mono(path: Path) -> tuple[np.ndarray, int]:
     import soundfile as sf
 
     wav, sr = sf.read(str(path), dtype="float32", always_2d=False)
-    wav = np.asarray(wav)
-    if wav.ndim > 1:
-        wav = wav.mean(axis=1)
-    return np.ascontiguousarray(wav, dtype=np.float32), int(sr)
+    return np.ascontiguousarray(_mono(wav), dtype=np.float32), int(sr)
 
 
 def _rms(x: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.square(x)))) if x.size else 0.0
+
+
+def _iter_wav(root: Path, stems: list[str]) -> Iterator[tuple[str, np.ndarray, np.ndarray, int]]:
+    """Yield (name, drums_mono, accompaniment_mono, sr) for the HQ wav layout."""
+    for dp in sorted(root.rglob("drums.wav")):
+        d = dp.parent
+        drums, sr = _load_mono(dp)
+        acc = None
+        for stem in stems:
+            sp = d / f"{stem}.wav"
+            if sp.exists():
+                s, _ = _load_mono(sp)
+                acc = s if acc is None else acc[: len(s)] + s[: len(acc)]
+        if acc is not None:
+            yield d.name.replace("/", "_"), drums, acc, sr
+
+
+def _iter_musdb(root: Path, stems: list[str]) -> Iterator[tuple[str, np.ndarray, np.ndarray, int]]:
+    """Yield (name, drums_mono, accompaniment_mono, sr) via the musdb mp4 reader."""
+    import musdb  # lazy: needs stempeg + ffmpeg
+
+    db = musdb.DB(root=str(root), is_wav=False)
+    if not db.tracks:
+        raise SystemExit(f"musdb found no tracks under {root}")
+    for track in db.tracks:
+        sr = int(track.rate)
+        drums = _mono(track.targets["drums"].audio)
+        acc = None
+        for stem in stems:
+            s = _mono(track.targets[stem].audio)
+            acc = s if acc is None else acc[: len(s)] + s[: len(acc)]
+        yield track.name.replace("/", "_"), drums, acc, sr
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,33 +89,20 @@ def main(argv: list[str] | None = None) -> int:
     import soundfile as sf
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    drum_paths = sorted(args.musdb_root.rglob("drums.wav"))
-    if not drum_paths:
-        print(f"no drums.wav under {args.musdb_root} (is it the HQ wav layout?)", flush=True)
-        return 1
-    print(f"{len(drum_paths)} MUSDB tracks under {args.musdb_root}")
+    # Auto-detect layout: HQ wav stems on disk, else the musdb mp4 reader.
+    if sorted(args.musdb_root.rglob("drums.wav")):
+        source = _iter_wav(args.musdb_root, args.stems)
+        print(f"reading HQ wav stems under {args.musdb_root}")
+    else:
+        source = _iter_musdb(args.musdb_root, args.stems)
+        print(f"reading mp4 STEMS under {args.musdb_root} via musdb")
 
     snr_db: list[float] = []
     written = 0
-    for dp in drum_paths:
-        track_dir = dp.parent
-        name = track_dir.name.replace("/", "_")
-        try:
-            drums, sr = _load_mono(dp)
-            acc = None
-            for stem in args.stems:
-                sp = track_dir / f"{stem}.wav"
-                if not sp.exists():
-                    continue
-                s, _ = _load_mono(sp)
-                acc = s if acc is None else acc[: len(s)] + s[: len(acc)]
-            if acc is None or _rms(acc) < 1e-6 or _rms(drums) < 1e-6:
-                print(f"  skip {name}: empty drums/accompaniment", flush=True)
-                continue
-        except Exception as exc:  # noqa: BLE001
-            print(f"  skip {name}: {exc}", flush=True)
+    for name, drums, acc, sr in source:
+        if acc is None or _rms(acc) < 1e-6 or _rms(drums) < 1e-6:
+            print(f"  skip {name}: empty drums/accompaniment", flush=True)
             continue
-
         ratio = 20.0 * math.log10(_rms(drums) / _rms(acc))
         snr_db.append(round(ratio, 3))
         sf.write(str(args.out_dir / f"{name}.wav"), acc, sr)
