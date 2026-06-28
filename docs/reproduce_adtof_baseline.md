@@ -92,6 +92,11 @@ macro-F (per-track mean)               0.775
 **micro-F 0.792 reproduces the published baseline.** Per-class is sensible:
 kick/hihat/cymbal ~0.83–0.85, snare 0.70; toms are the weak spot (F 0.35, only
 90 reference onsets and the model over-predicts them — e.g. 62 false toms on the
-sparse ride-driven 80sRock track). No systematic class swap: dataset-wide HH est
-(2327) tracks HH ref (2639), confirming the tom/hihat pitch assignment is
-correct. **This 0.792 micro-F is our floor.**
+sparse ride-driven 80sRock track). The *per-class error pattern* independently
+matches known ADTOF behavior, not just the aggregate: (a) no systematic class
+swap — dataset-wide HH est (2327) tracks HH ref (2639), confirming the tom/hihat
+pitch assignment is correct; (b) the snare false-negatives (1072 = 2654 ref −
+1582 tp) are dominated by MDB's ~790 SDG **ghost notes** (quiet hits bundled into
+the class-level SD), which ADTOF is known to miss on full mix. **This 0.792
+micro-F is our floor; the separate macro-F 0.716 (same MDB / scheme-5 / ±50 ms
+harness) is the bar our own model must later clear — score it identically.**
