@@ -43,6 +43,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--num-workers", type=int, default=4, help="DataLoader workers (feed the GPU)")
     ap.add_argument("--split", default="train", help="train split (egmd: train/validation/test)")
     ap.add_argument("--limit", type=int, default=None, help="cap #tracks (smoke runs)")
+    ap.add_argument("--shuffle-seed", type=int, default=None,
+                    help="shuffle tracks with this seed BEFORE --limit, for a diverse "
+                         "subset (E-GMD is ordered by groove, so the head is low-diversity)")
     ap.add_argument("--out", type=Path, default=Path("checkpoints/seq2seq.pt"),
                     help="checkpoint output path")
     ap.add_argument("--eval-after", action="store_true", help="score a held-out split after training")
@@ -62,9 +65,14 @@ def main(argv: list[str] | None = None) -> int:
 
     adapter = build_adapter(args.dataset, args.root, args.split)
     tracks = list(adapter.tracks())
+    if args.shuffle_seed is not None:
+        import random
+
+        random.Random(args.shuffle_seed).shuffle(tracks)
     if args.limit:
         tracks = tracks[: args.limit]
-    print(f"{len(tracks)} tracks from {adapter.name}/{args.split}")
+    print(f"{len(tracks)} tracks from {adapter.name}/{args.split}"
+          + (f" (shuffled seed={args.shuffle_seed})" if args.shuffle_seed is not None else ""))
 
     tokenizer = DrumTokenizer(scheme=args.scheme)
     frontend = LogMelFrontend()
