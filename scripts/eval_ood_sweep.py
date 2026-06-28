@@ -87,9 +87,19 @@ def main(argv: list[str] | None = None) -> int:
         scores = [score_track(t.annotation, preds[t.track_id], scheme)
                   for t in tracks if t.track_id in preds]
         ds = aggregate(scores, name=f"{adapter.name}")
-        rows.append((_epoch_of(path), ds.macro_f_pooled, ds.micro_f, scheme))
+        # Pool raw counts to track the over-generation MECHANISM, not just F:
+        # density = predicted/reference onsets (should fall toward 1.0 as the
+        # model stops hallucinating drums on non-drum energy); precision rises.
+        n_ref = n_est = n_tp = 0
+        for t in scores:
+            for cs in t.per_class.values():
+                n_ref += cs.n_ref; n_est += cs.n_est; n_tp += cs.tp
+        density = n_est / n_ref if n_ref else 0.0
+        prec = n_tp / n_est if n_est else 0.0
+        rec = n_tp / n_ref if n_ref else 0.0
+        rows.append((_epoch_of(path), ds.macro_f_pooled, ds.micro_f, scheme, density, prec, rec))
         line = (f"epoch {_epoch_of(path):>2}: macro-F {ds.macro_f_pooled:.3f}  "
-                f"micro-F {ds.micro_f:.3f}")
+                f"micro-F {ds.micro_f:.3f}  density {density:.2f}x  P {prec:.2f}  R {rec:.2f}")
         print(f"  {line}", flush=True)
         if args.out_file is not None:  # durable per-epoch record, survives a kill
             with open(args.out_file, "a") as fh:
@@ -100,10 +110,10 @@ def main(argv: list[str] | None = None) -> int:
     best_macro = max(rows, key=lambda r: r[1])
     best_micro = max(rows, key=lambda r: r[2])
     print(f"\nOOD transfer curve ({adapter.name}, scheme {scheme}, {len(tracks)} tracks):")
-    print(f"  {'epoch':>5} {'macro-F':>8} {'micro-F':>8}")
-    for ep, ma, mi, _ in rows:
+    print(f"  {'epoch':>5} {'macro-F':>8} {'micro-F':>8} {'density':>8} {'prec':>6} {'rec':>6}")
+    for ep, ma, mi, _, dens, pr, rc in rows:
         mark = "  <- best macro" if (ep, ma) == (best_macro[0], best_macro[1]) else ""
-        print(f"  {ep:>5} {ma:>8.3f} {mi:>8.3f}{mark}")
+        print(f"  {ep:>5} {ma:>8.3f} {mi:>8.3f} {dens:>7.2f}x {pr:>6.2f} {rc:>6.2f}{mark}")
     print(f"\nbest macro-F {best_macro[1]:.3f} @ epoch {best_macro[0]}  "
           f"(ADTOF floor {ADTOF_FLOOR['macro']:.3f})")
     print(f"best micro-F {best_micro[2]:.3f} @ epoch {best_micro[0]}  "
