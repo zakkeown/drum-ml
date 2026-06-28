@@ -4,6 +4,7 @@ version = "0.0.1"
 description = "Automatic drum transcription: taxonomy, data ingestion, and evaluation toolkit"
 readme = "README.md"
 requires-python = ">=3.10"
+# Core: the torch-free measurement stack (taxonomy, events, eval, tokenizer).
 dependencies = [
     "numpy>=1.24",
     "mir_eval>=0.7",
@@ -11,11 +12,23 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Audio loading / feature extraction — only needed once you train, not for eval.
-audio = ["librosa>=0.10", "soundfile>=0.12"]
+# The training stack (model, audio front-ends, dataset). `pip install .[model]`.
+model = [
+    "torch>=2.2",
+    "torchaudio>=2.2",
+    "soundfile>=0.12",
+]
+# MERT foundation-model front-end (large download); `pip install .[model,mert]`.
+mert = ["transformers>=4.40"]
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+# Dev env pulls the model stack too so the full test suite runs under `uv sync`.
+dev = [
+    "pytest>=8.0",
+    "torch>=2.2",
+    "torchaudio>=2.2",
+    "soundfile>=0.12",
+]
 
 [build-system]
 requires = ["hatchling"]

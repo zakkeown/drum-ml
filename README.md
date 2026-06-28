@@ -11,25 +11,43 @@ This repo starts at **step 1 of the build order**: a verifiable core for
 
 ```
 src/drumml/
+  # --- measurement core (torch-free) ---
   taxonomy.py        canonical 14-class vocab + deterministic 3/5/8-class reductions
   events.py          DrumEvent / DrumAnnotation — the common representation + TSV I/O
   eval.py            mir_eval onset-F (per-class macro/micro) + cross-dataset (OOD) aggregation
-  data/              dataset adapters that normalize each corpus onto the taxonomy
+  tokenize.py        MT3-style event <-> token codec (vocab 214 @ scheme=5)
+  data/
     egmd.py            E-GMD (exact, via GM MIDI notes)
     mdb.py             MDB-Drums (label-table based; VERIFY tokens vs repo)
     adtof.py           ADTOF-style label/prediction parser
   baselines/
     adtof_port.py    run the ADTOF floor baseline -> canonical output
-scripts/run_eval.py  CLI: score a prediction dir against a dataset
-docs/                reproduce_adtof_baseline.md
+  # --- training stack (needs the `model` extra: torch) ---
+  features.py        LogMel + MERT (lazy) audio front-ends
+  model/seq2seq.py   MT3/T5-style encoder-decoder (~32M @ default config)
+  data/torch_dataset.py  segmenting torch Dataset + collate
+  train.py           teacher-forced training loop
+scripts/
+  run_eval.py        CLI: score a prediction dir against a dataset
+  train.py           CLI: train a seq2seq transcriber from a dataset adapter
+docs/                reproduce_adtof_baseline.md, step3_contracts.md
 tests/               fast, dataset-free unit tests (synthetic fixtures)
 ```
 
 ## Setup
 
 ```bash
-uv sync                 # creates .venv (Python 3.12), installs deps + package
-uv run pytest           # run the test suite
+uv sync                 # creates .venv (Python 3.12), installs everything + the package
+uv run pytest           # full suite (55 tests; MERT test skips without `transformers`)
+```
+
+`uv sync` installs the full dev environment (incl. torch) so all tests run. The
+*runtime* deps are split so eval-only users stay light:
+
+```bash
+pip install drumml            # torch-free core: taxonomy, events, eval, tokenizer
+pip install drumml[model]     # + training stack (torch, torchaudio, soundfile)
+pip install drumml[model,mert]  # + MERT foundation-model front-end
 ```
 
 ## Design decisions baked in
@@ -45,8 +63,8 @@ uv run pytest           # run the test suite
 
 ## Next steps (from the build order)
 
-1. ✅ Taxonomy + eval harness + adapters (this scaffold).
-2. Reproduce the **ADTOF baseline** floor → `docs/reproduce_adtof_baseline.md`.
-3. MT3-style seq2seq on E-GMD + STAR; confirm it matches/beats ADTOF cross-dataset.
-4. Add the **MERT front-end** with learned layer-weighting; measure the OOD delta.
-5. Velocity tokens + CLAP-curated synthetic into real backing tracks (DTM).
+1. ✅ Taxonomy + eval harness + adapters.
+2. ⬜ Reproduce the **ADTOF baseline** floor → `docs/reproduce_adtof_baseline.md` (needs external repo + data).
+3. ✅ MT3-style seq2seq **stack scaffolded & unit-tested** (tokenizer, LogMel/MERT front-ends, model, dataset, train loop). ⬜ Still to do: train on real E-GMD + STAR and confirm it matches/beats ADTOF cross-dataset.
+4. ◑ **MERT front-end** wrapper present (`features.MERTFrontend`); ⬜ learned layer-weighting + fusion + OOD-delta measurement.
+5. ⬜ Velocity tokens (tokenizer supports them) + CLAP-curated synthetic into real backing tracks (DTM).
