@@ -119,6 +119,53 @@ remaining gap + a modest recall drop (0.60→0.50, the model trades some recall 
 much higher precision) are the next levers: MUSDB is a proxy for real recordings,
 11M params is small, and real labelled full-mix data (ADTOF) is the eventual step.
 
+## Follow-up 2: the recall drop is a *timbre/domain* gap, not a masking gap (negative result)
+
+Per-class decomposition of the recall drop (MDB, no-aug ep6 → +mix ep7) localizes
+it: hihat recall fell **0.567→0.382 with no precision gain** (HH precision flat at
+~0.71), and kick fell 0.797→0.699 (also no precision gain) — whereas snare's loss
+(0.718→0.554) *bought* precision (0.20→0.41, killing a 3.5× false-positive flood).
+So the **recoverable** recall is HH (and some KD); SD's loss is the intended effect.
+More epochs does **not** recover HH (ep7→ep8 pooled recall rises 0.503→0.527 but
+F falls 0.460→0.448 — it just slides back along the P/R trade; HH recall stays
+~0.37). So HH suppression is structural to the augmentation, not undertraining.
+
+The natural hypothesis was **over-suppression under loud accompaniment** (MUSDB's
+empirical SNR reaches −20 dB; clip the inaudible tail to recover recall). A
+fixed-SNR probe on E-GMD **test** drums (exact labels, so masking is isolated from
+domain shift — `scripts/probe_snr_robustness.py`) **falsifies** it:
+
+```
+              HH recall vs fixed mix-SNR (60 E-GMD test tracks)
+  SNR     clean   +10    +5     0     -5    -10    -15
+  +mix    0.677  0.668  0.661  0.665  0.652  0.628  0.589   <- ~FLAT (robust)
+  no-aug  0.836  0.775  0.725  0.658  0.593  0.538   --     <- collapses
+```
+
+The +mix model's hihat recall is **nearly flat across a 25 dB SNR range**
+(0.677→0.589): the augmentation *succeeded* at making detection masking-robust
+(the no-aug model collapses 0.836→0.538 over the same range). The decisive
+comparison: +mix on E-GMD-test mixed at **−5 dB** (≈ MDB's median SNR) = HH recall
+**0.652**, but +mix on **real MDB** = **0.382** — same model, same SNR regime, a
+**0.27 gap that loudness cannot explain**. It is a **drum-timbre / recording-domain
+gap** (E-GMD's sampled kits → MDB's real acoustic drums). The mix augmentation
+addressed the wrong axis; it even cost a little in-domain hihat recall
+(clean E-GMD-test HH 0.84→0.68) by tightening the detector.
+
+**Consequence:** the recall drop **cannot be recovered by tuning the mix SNR**
+(floor-clip, distribution shift, or aug-prob — the latter only slides the same P/R
+trade, as ep8 showed). The +mix model sits on a P/R frontier you can slide but not
+push outward; pushing it out needs **new information about drum timbre**, not a
+re-weighted masking distribution. The genuine levers are timbre/domain coverage:
+**drum-audio augmentation** (EQ / pitch-shift / reverb / codec on the E-GMD drums
+themselves, to broaden the timbre distribution) or — definitively — **real
+labelled full-mix data (ADTOF)**, which closes both the mix *and* timbre gaps.
+
+(Methodological note: the per-class diagnosis was read off MDB, so MDB has acted as
+a dev set here. The floor was *not* tuned on MDB — the probe is on E-GMD test — but
+a clean cross-dataset headline for any timbre intervention needs a fresh full-mix
+set, i.e. ADTOF, not MDB.)
+
 ## Reproduce
 
 ```bash
@@ -132,4 +179,8 @@ uv run python scripts/train.py --dataset egmd --root datasets/e-gmd --split trai
 # OOD transfer curves vs the ADTOF floor
 uv run python scripts/eval_ood_sweep.py --checkpoints "checkpoints/egmd_seq2seq_div_epoch*.pt" \
     --dataset mdb --root datasets/MDBDrums --max-len 192
+# Falsification probe: HH recall vs fixed mix-SNR (isolates masking from domain shift)
+uv run python scripts/probe_snr_robustness.py \
+    --checkpoints checkpoints/egmd_seq2seq_mix_epoch7.pt checkpoints/egmd_seq2seq_div_epoch6.pt \
+    --accompaniment-dir datasets/musdb_accompaniment --egmd-root datasets/e-gmd --n-tracks 60
 ```
