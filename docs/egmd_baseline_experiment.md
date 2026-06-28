@@ -1,0 +1,100 @@
+# First real model: E-GMD seq2seq, and a controlled data-diversity A/B
+
+Date: 2026-06-28. First real training run of the MT3-style seq2seq transcriber,
+plus a controlled experiment isolating **training-data diversity** as a variable.
+All scores: 5-class, onset F at ±50 ms, scored through `drumml.eval` (the same
+harness validated by the ADTOF reproduction).
+
+## Setup
+
+- Model: `Seq2SeqADT`, d_model 256, 6+6 layers, 11.2M params. Greedy decode.
+- Data: E-GMD, 8000 train tracks, 8 epochs, batch 32, AdamW lr 3e-4, MPS.
+- Two runs differing in **one variable only — how the 8000 tracks are sampled**:
+  - **head**: `tracks[:8000]` — E-GMD is ordered by groove (~43 kits/groove), so
+    this is only **~187 unique grooves**. `checkpoints/egmd_seq2seq_epoch*.pt`.
+  - **diverse**: `--shuffle-seed 0` then take 8000 — **all ~809 grooves**.
+    `checkpoints/egmd_seq2seq_div_epoch*.pt`.
+- Floor: reproduced ADTOF on MDB-Drums = **macro 0.716 / micro 0.792** (see
+  `reproduce_adtof_baseline.md`).
+
+## Result
+
+| | head (187 grooves) | diverse (809 grooves) | ADTOF floor |
+|---|---|---|---|
+| train mean-loss (ep1→ep8) | 1.8 → **0.06** (memorising) | 1.8 → **0.49** (learning) |
+| **in-domain** E-GMD test, macro / micro | 0.302 / 0.318 | **0.938 / 0.941** | — |
+| **OOD** MDB, best macro / micro | 0.133 / 0.208 (ep5) | **0.346 / 0.381 (ep6)** | 0.716 / 0.792 |
+
+Per-class in-domain (diverse, ep8): KD 0.991, SD 0.897, TT 0.901, HH 0.934,
+CY 0.968 — strong even on toms.
+
+OOD transfer curves (MDB, scheme 5, max_len 192). Both peak mid-training then
+decline — over-fitting E-GMD timbre **hurts** transfer, which is why we
+epoch-stamp and sweep rather than trust the last checkpoint:
+
+```
+epoch    head macro   diverse macro
+  1         0.009         0.208
+  2         0.106         0.259
+  3         0.108         0.262
+  4         0.121         0.253
+  5         0.133 *       0.274
+  6         0.125         0.346 *
+  7         0.124         0.333
+  8         0.112         0.293        (* = best)
+```
+
+## What this shows
+
+1. **The bottleneck is data, not architecture.** Same model, same number of
+   training tracks: sampling diversely (187 → 809 grooves) lifts in-domain test
+   F from **0.30 → 0.94**. The head sample lets the model *memorise* (train loss
+   0.06) while test stays flat from epoch 1; diverse data forces real learning (a
+   gradual loss curve and a rising test score).
+
+2. **Diversity helps OOD too, but cannot close the full-mix gap.** Diverse
+   sampling more than doubles OOD MDB (0.13 → 0.35 macro). But that is still far
+   below the 0.716 full-mix floor. **Why:** on MDB full mixes (bass/guitar/vocals
+   it has never heard) the model **over-generates ~4× too many onsets** (e.g. 419
+   predicted vs 103 reference on one track) — it fires drums on non-drum spectral
+   energy. Groove variety teaches rhythm/timing (which partly transfers) but
+   nothing about *separating drums from a mix*. That needs **full-mix training
+   data**, the next lever.
+
+## Pipeline is provably correct (this is a real result, not a bug)
+
+Before trusting the low head number, the whole transcribe/decode/score path was
+exonerated:
+
+- Oracle round-trip (reference → tokens → reference, no model) scores **1.000** —
+  the tokenizer/segmentation/stitching preserve timing.
+- On **training** tracks the model scores **0.98–0.999** with a matched-onset
+  timing offset of **−0.0 ms** (std 3.7 ms) — greedy decode and timing are exact;
+  no systematic offset, no exposure-bias collapse.
+
+So head's 0.31 in-domain test is a genuine generalisation gap (caused by the
+clustered sample), not a measurement artefact.
+
+## Caveats
+
+- E-GMD's train/test split is **not groove-disjoint**, so the in-domain 0.94
+  partly reflects new takes/kits of grooves whose siblings were trained on. The
+  **MDB OOD** number is the contamination-free headline.
+- max_len 192 for the OOD sweep (the model over-generates on OOD; 192 = 96
+  onsets/2 s, ≫ real density, and head under-generates so the cap doesn't bind —
+  verified identical to max_len 512 for head).
+
+## Reproduce
+
+```bash
+# head (clustered) and diverse runs
+uv run python scripts/train.py --dataset egmd --root datasets/e-gmd --split train \
+    --limit 8000 --epochs 8 --d-model 256 --batch-size 32 --num-workers 8 \
+    --out checkpoints/egmd_seq2seq.pt --eval-after --eval-split test --eval-limit 100
+uv run python scripts/train.py --dataset egmd --root datasets/e-gmd --split train \
+    --limit 8000 --shuffle-seed 0 --epochs 8 --d-model 256 --batch-size 32 --num-workers 8 \
+    --out checkpoints/egmd_seq2seq_div.pt --eval-after --eval-split test --eval-limit 100
+# OOD transfer curves vs the ADTOF floor
+uv run python scripts/eval_ood_sweep.py --checkpoints "checkpoints/egmd_seq2seq_div_epoch*.pt" \
+    --dataset mdb --root datasets/MDBDrums --max-len 192
+```

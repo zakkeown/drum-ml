@@ -52,6 +52,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-len", type=int, default=512)
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--device", default="auto")
+    ap.add_argument("--out-file", type=Path, default=None,
+                    help="append each epoch's result here as it completes (kill-robust)")
     args = ap.parse_args(argv)
 
     from drumml.checkpoint import load_checkpoint
@@ -86,8 +88,12 @@ def main(argv: list[str] | None = None) -> int:
                   for t in tracks if t.track_id in preds]
         ds = aggregate(scores, name=f"{adapter.name}")
         rows.append((_epoch_of(path), ds.macro_f_pooled, ds.micro_f, scheme))
-        print(f"  epoch {_epoch_of(path):>2}: macro-F {ds.macro_f_pooled:.3f}  "
-              f"micro-F {ds.micro_f:.3f}", flush=True)
+        line = (f"epoch {_epoch_of(path):>2}: macro-F {ds.macro_f_pooled:.3f}  "
+                f"micro-F {ds.micro_f:.3f}")
+        print(f"  {line}", flush=True)
+        if args.out_file is not None:  # durable per-epoch record, survives a kill
+            with open(args.out_file, "a") as fh:
+                fh.write(line + "\n")
 
     # --- transfer curve + comparison to the ADTOF floor ----------------------
     scheme = rows[0][3]
