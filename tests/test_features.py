@@ -60,6 +60,34 @@ def test_logmel_resample_path():
     assert torch.isfinite(out).all()
 
 
+def test_logmel_handles_segment_shorter_than_nfft():
+    """A trailing partial segment can be far shorter than n_fft; it must not crash.
+
+    Reproduces the real E-GMD failure: a ~21 ms tail (924 samples) is shorter
+    than the centered STFT's reflect padding (n_fft//2 = 1024), which used to
+    raise. The front-end now right-pads short clips, yielding a few valid frames.
+    """
+    fe = LogMelFrontend(sample_rate=44100, n_mels=128, n_fft=2048, hop_length=441)
+    short = np.random.randn(924).astype(np.float32)  # < n_fft
+
+    out = fe(short)
+
+    n_frames, feat = out.shape
+    assert feat == 128
+    assert n_frames >= 1
+    assert torch.isfinite(out).all()
+
+
+def test_logmel_handles_tiny_and_empty_segments():
+    """Degenerate lengths (a few samples, and empty) must still return valid frames."""
+    fe = LogMelFrontend()
+    for n in (1, 10, 0):
+        out = fe(np.zeros(n, dtype=np.float32))
+        assert out.shape[1] == 128
+        assert out.shape[0] >= 1
+        assert torch.isfinite(out).all()
+
+
 def test_mert_skips_without_weights():
     """MERT requires transformers + weights; skip cleanly if unavailable."""
     pytest.importorskip("transformers")

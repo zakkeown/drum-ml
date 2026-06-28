@@ -81,6 +81,14 @@ class LogMelFrontend:
         if sr is not None and sr != self.sample_rate:
             wav = torchaudio.functional.resample(wav, orig_freq=sr, new_freq=self.sample_rate)
 
+        # The centered STFT reflect-pads by n_fft//2, which requires at least
+        # n_fft samples. A track's trailing partial segment can be far shorter
+        # than that (e.g. a ~20 ms remainder), so right-pad with zeros: a short
+        # clip simply yields fewer frames instead of crashing. Affects both the
+        # training dataset and inference, which share this front-end.
+        if wav.shape[-1] < self.n_fft:
+            wav = torch.nn.functional.pad(wav, (0, self.n_fft - wav.shape[-1]))
+
         mel = self.mel(wav)  # (n_mels, n_frames)
         log_mel = torch.log(mel + self.eps)
         return log_mel.transpose(0, 1).contiguous().to(torch.float32)  # (n_frames, n_mels)
