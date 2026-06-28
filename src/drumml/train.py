@@ -58,10 +58,13 @@ def train(
     device: str = "cpu",
     num_workers: int = 0,
     on_step: Optional[Callable[[int, float], None]] = None,
+    on_epoch: Optional[Callable[[int, list[float]], None]] = None,
 ) -> list[float]:
     """Minimal training loop. Returns the per-step loss history.
 
-    ``on_step(global_step, loss)`` is an optional callback for logging.
+    ``on_step(global_step, loss)`` is an optional per-step logging callback;
+    ``on_epoch(epoch_idx, history)`` fires at each epoch end (e.g. to checkpoint
+    and print progress on a long run).
     """
     model.to(device).train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
@@ -75,7 +78,7 @@ def train(
 
     history: list[float] = []
     step = 0
-    for _ in range(epochs):
+    for epoch in range(epochs):
         for batch in loader:
             batch = {
                 k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()
@@ -88,4 +91,6 @@ def train(
             if on_step is not None:
                 on_step(step, history[-1])
             step += 1
+        if on_epoch is not None:
+            on_epoch(epoch, history)
     return history

@@ -80,9 +80,32 @@ def main(argv: list[str] | None = None) -> int:
     n_params = sum(p.numel() for p in model.parameters())
     print(f"model: {n_params/1e6:.1f}M params, vocab={tokenizer.vocab_size}")
 
+    import time
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    t0 = time.monotonic()
+
     def log(step, loss):
-        if step % 20 == 0:
-            print(f"step {step:>6}  loss {loss:.4f}")
+        if step % 50 == 0:
+            rate = step / (time.monotonic() - t0) if step else 0.0
+            print(f"step {step:>7}  loss {loss:.4f}  ({rate:.1f} steps/s)", flush=True)
+
+    def on_epoch(epoch, history):
+        # Epoch-stamp every checkpoint: the OOD (cross-dataset) optimum usually
+        # arrives *before* the in-domain optimum, so we need each epoch to sweep
+        # later, not just the last. ~45 MB each at 11M params — cheap.
+        done = epoch + 1
+        ckpt = args.out.with_name(f"{args.out.stem}_epoch{done}{args.out.suffix}")
+        save_checkpoint(ckpt, model, config, tokenizer)
+        elapsed = time.monotonic() - t0
+        eta = elapsed / done * (args.epochs - done)
+        recent = history[-200:]
+        mean_loss = sum(recent) / len(recent)
+        print(
+            f"== epoch {done}/{args.epochs}  mean-loss {mean_loss:.4f}  "
+            f"elapsed {elapsed/60:.1f}m  eta {eta/60:.1f}m  -> saved {ckpt}",
+            flush=True,
+        )
 
     history = train(
         model,
@@ -94,8 +117,9 @@ def main(argv: list[str] | None = None) -> int:
         device=device,
         num_workers=args.num_workers,
         on_step=log,
+        on_epoch=on_epoch,
     )
-    print(f"done. final loss {history[-1]:.4f}")
+    print(f"done. final loss {history[-1]:.4f}  total {(time.monotonic()-t0)/60:.1f}m")
 
     save_checkpoint(args.out, model, config, tokenizer)
     print(f"saved checkpoint -> {args.out}")
