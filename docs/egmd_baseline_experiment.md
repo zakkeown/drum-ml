@@ -144,27 +144,47 @@ domain shift — `scripts/probe_snr_robustness.py`) **falsifies** it:
 
 The +mix model's hihat recall is **nearly flat across a 25 dB SNR range**
 (0.677→0.589): the augmentation *succeeded* at making detection masking-robust
-(the no-aug model collapses 0.836→0.538 over the same range). The decisive
-comparison: +mix on E-GMD-test mixed at **−5 dB** (≈ MDB's median SNR) = HH recall
-**0.652**, but +mix on **real MDB** = **0.382** — same model, same SNR regime, a
-**0.27 gap that loudness cannot explain**. It is a **drum-timbre / recording-domain
-gap** (E-GMD's sampled kits → MDB's real acoustic drums). The mix augmentation
-addressed the wrong axis; it even cost a little in-domain hihat recall
-(clean E-GMD-test HH 0.84→0.68) by tightening the detector.
+(the no-aug model collapses 0.836→0.538 over the same range).
+
+**The decisive comparison — synthetic vs real transfer — is what names the gap.**
+Line each model's real-MDB recall up against its *matched-SNR synthetic* recall:
+
+```
+                MDB (real)   E-GMD-test mixed @ -5/-10 dB   transfers?
+  no-aug HH R      0.567            0.593 / 0.538            YES  (real == synthetic)
+  +mix   HH R      0.382       >=0.589 at EVERY SNR (-15!)   NO   (real << worst synthetic)
+```
+
+The no-aug model **transfers**: its MDB hihat recall (0.567) is exactly what its
+synthetic performance at MDB's SNR regime predicts (0.54–0.59). The +mix model
+**does not**: on real audio (0.382) it is *worse than its worst synthetic SNR*
+(0.589 at −15 dB). So the deficit is **+mix-specific** — the augmentation's
+robustness is keyed to the exact synthetic distribution (E-GMD drums *digitally
+summed* with MUSDB stems) and evaporates on a real produced mix. This is not a
+generic drum-timbre gap; it is **sim-to-real overfitting of the augmentation
+itself** — the model learned to find drums under MUSDB, not under a real mix.
+(The "timbre" intuition is one bundled factor among digital-sum-vs-produced-mix,
+accompaniment realism, and groove novelty.) It even cost a little in-domain hihat
+recall (clean E-GMD-test HH 0.84→0.68) by tightening the detector to the synthetic
+distribution.
 
 **Consequence:** the recall drop **cannot be recovered by tuning the mix SNR**
 (floor-clip, distribution shift, or aug-prob — the latter only slides the same P/R
-trade, as ep8 showed). The +mix model sits on a P/R frontier you can slide but not
-push outward; pushing it out needs **new information about drum timbre**, not a
-re-weighted masking distribution. The genuine levers are timbre/domain coverage:
-**drum-audio augmentation** (EQ / pitch-shift / reverb / codec on the E-GMD drums
-themselves, to broaden the timbre distribution) or — definitively — **real
-labelled full-mix data (ADTOF)**, which closes both the mix *and* timbre gaps.
+trade, as ep8 showed). More to the point, the data implicate the *synthetic-ness*
+of the augmentation, so the levers split by confidence:
+
+* **Real labelled full-mix data (ADTOF)** — high-confidence. It is the only lever
+  that attacks what the evidence actually implicates (the sim-to-real gap).
+* **Drum-audio augmentation** (EQ / pitch-shift / reverb / codec on isolated drums,
+  digitally summed) — cheap, but it is *the same class of synthetic intervention
+  that just failed to transfer*. Worth a bet, but gate it behind the same
+  `probe_snr_robustness`-style E-GMD-test-vs-real check *before* committing a
+  ~100-min run; do not assume it transfers.
 
 (Methodological note: the per-class diagnosis was read off MDB, so MDB has acted as
 a dev set here. The floor was *not* tuned on MDB — the probe is on E-GMD test — but
-a clean cross-dataset headline for any timbre intervention needs a fresh full-mix
-set, i.e. ADTOF, not MDB.)
+a clean cross-dataset headline for any intervention needs a fresh full-mix set,
+i.e. ADTOF, not MDB.)
 
 ## Reproduce
 
