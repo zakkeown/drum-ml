@@ -34,6 +34,42 @@ def test_adtof_label_parser(tmp_path):
     ]
 
 
+def _write_drum_midi(pretty_midi, path, pitch=36):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pm = pretty_midi.PrettyMIDI()
+    inst = pretty_midi.Instrument(program=0, is_drum=True)
+    inst.notes.append(pretty_midi.Note(velocity=100, pitch=pitch, start=0.0, end=0.05))
+    pm.instruments.append(inst)
+    pm.write(str(path))
+
+
+def test_egmd_adapter_hf_mirror_layout(tmp_path):
+    """schism-audio/e-gmd mirror: metadata.csv with midi_path/audio_path columns."""
+    pretty_midi = pytest.importorskip("pretty_midi")
+    from drumml.data.egmd import EGMDAdapter
+
+    midi_rel = "midi/test/acoustic-kit/drummer1/eval_session/x.midi"
+    audio_rel = "audio/test/acoustic-kit/drummer1/eval_session/x.wav"
+    _write_drum_midi(pretty_midi, tmp_path / midi_rel, pitch=36)
+    midi_rel_tr = "midi/train/acoustic-kit/drummer1/session1/y.midi"
+    _write_drum_midi(pretty_midi, tmp_path / midi_rel_tr, pitch=38)
+    (tmp_path / "metadata.csv").write_text(
+        "file_name,split,midi_path,audio_path\n"
+        f"{audio_rel},test,{midi_rel},{audio_rel}\n"
+        f"audio/train/acoustic-kit/drummer1/session1/y.wav,train,{midi_rel_tr},audio/train/acoustic-kit/drummer1/session1/y.wav\n"
+    )
+
+    tracks = list(EGMDAdapter(tmp_path).tracks())
+    assert len(tracks) == 2
+    test_track = next(t for t in tracks if t.track_id == "x")
+    assert test_track.annotation.events[0].canonical is Canonical.KICK
+    assert test_track.audio_path == tmp_path / audio_rel
+
+    # split filtering uses the metadata 'split' column
+    only_test = list(EGMDAdapter(tmp_path, split="test").tracks())
+    assert [t.track_id for t in only_test] == ["x"]
+
+
 def test_egmd_midi_round_trip(tmp_path):
     pretty_midi = pytest.importorskip("pretty_midi")
     from drumml.data.egmd import annotation_from_midi

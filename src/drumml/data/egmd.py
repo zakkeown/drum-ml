@@ -38,24 +38,41 @@ class EGMDAdapter(DatasetAdapter):
     name = "egmd"
 
     def __init__(self, root: str | Path, split: Optional[str] = None):
-        """``root`` is the extracted E-GMD directory containing the v1 CSV index.
+        """``root`` is the extracted E-GMD directory.
+
+        Two on-disk layouts are auto-detected:
+
+        * **HF mirror** (``schism-audio/e-gmd``): a ``metadata.csv`` whose
+          ``midi_path`` / ``audio_path`` columns hold full in-repo paths under
+          ``audio/{split}/{kit}/...`` and ``midi/{split}/{kit}/...``.
+        * **Original Google release**: an ``e-gmd-v*.csv`` whose
+          ``midi_filename`` / ``audio_filename`` columns are relative to ``root``.
 
         ``split`` optionally filters to "train" / "validation" / "test".
         """
         self.root = Path(root)
         self.split = split
-        matches = list(self.root.glob("e-gmd-v*.csv"))
-        if not matches:
-            raise FileNotFoundError(f"no e-gmd-v*.csv index under {self.root}")
-        self.index_csv = matches[0]
+
+        hf_meta = self.root / "metadata.csv"
+        original = sorted(self.root.glob("e-gmd-v*.csv"))
+        if hf_meta.exists():
+            self.index_csv = hf_meta
+            self._midi_col, self._audio_col = "midi_path", "audio_path"
+        elif original:
+            self.index_csv = original[0]
+            self._midi_col, self._audio_col = "midi_filename", "audio_filename"
+        else:
+            raise FileNotFoundError(
+                f"no E-GMD index under {self.root} (expected metadata.csv or e-gmd-v*.csv)"
+            )
 
     def tracks(self) -> Iterator[Track]:
         with self.index_csv.open(newline="") as fh:
             for row in csv.DictReader(fh):
                 if self.split and row.get("split") != self.split:
                     continue
-                midi_rel = row["midi_filename"]
-                audio_rel = row.get("audio_filename")
+                midi_rel = row[self._midi_col]
+                audio_rel = row.get(self._audio_col)
                 track_id = Path(midi_rel).stem
                 ann = annotation_from_midi(self.root / midi_rel, track_id)
                 audio = self.root / audio_rel if audio_rel else None
