@@ -39,7 +39,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--split", default="test")
     ap.add_argument("--limit", type=int, default=None, help="cap #tracks scored")
     ap.add_argument("--scheme", default=None, help="override eval scheme (default: tokenizer's)")
-    ap.add_argument("--max-len", type=int, default=1024)
+    ap.add_argument("--max-len", type=int, default=512)
+    ap.add_argument("--batch-size", type=int, default=64, help="segments decoded per batch")
     ap.add_argument("--device", default="auto", help="auto | mps | cuda | cpu")
     args = ap.parse_args(argv)
 
@@ -63,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     frontend = LogMelFrontend()
     preds = transcribe_dataset(
         model, tracks, tokenizer, frontend,
-        max_len=args.max_len, device=device,
+        max_len=args.max_len, batch_size=args.batch_size, device=device,
         on_track=lambda i, tid: (i % 50 == 0) and print(f"  transcribed {i} ..."),
     )
 

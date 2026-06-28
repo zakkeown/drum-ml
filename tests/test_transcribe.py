@@ -123,6 +123,41 @@ def test_encoder_is_actually_wired():
     assert not _same(decA.onsets_by_class("5"), decB.onsets_by_class("5"))
 
 
+# --- batched decode must equal per-segment decode -----------------------------
+def test_batched_decode_matches_per_segment():
+    import numpy as np
+
+    from drumml.features import LogMelFrontend
+
+    torch.manual_seed(0)
+    tok = DrumTokenizer()
+    fe = LogMelFrontend()
+    model = Seq2SeqADT(
+        Seq2SeqConfig(
+            feature_dim=fe.feature_dim,
+            vocab_size=tok.vocab_size,
+            d_model=32,
+            n_heads=4,
+            n_encoder_layers=1,
+            n_decoder_layers=1,
+            dim_feedforward=64,
+        )
+    ).eval()
+
+    sr = 22050
+    # 5.3 s is NOT a multiple of 2.048 s -> the last segment is shorter -> the
+    # batched path pads it, exercising the encoder/cross-attn padding masks.
+    wav = np.random.RandomState(0).randn(int(5.3 * sr)).astype("float32")
+
+    per_seg = transcribe(model, wav, sr, tok, fe, max_len=12, batch_size=1)
+    batched = transcribe(model, wav, sr, tok, fe, max_len=12, batch_size=8)
+
+    # bit-identical events (times + classes), not just within tolerance
+    assert [(round(e.time, 6), e.canonical) for e in per_seg.events] == [
+        (round(e.time, 6), e.canonical) for e in batched.events
+    ]
+
+
 # --- the bridge itself: model + audio -> scorable annotation ------------------
 def test_transcribe_returns_scorable_annotation_over_multiple_segments():
     torch.manual_seed(0)
