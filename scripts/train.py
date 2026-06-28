@@ -46,6 +46,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--shuffle-seed", type=int, default=None,
                     help="shuffle tracks with this seed BEFORE --limit, for a diverse "
                          "subset (E-GMD is ordered by groove, so the head is low-diversity)")
+    ap.add_argument("--accompaniment-dir", type=Path, default=None,
+                    help="dir of drum-free accompaniment wavs + snr_db.json; if set, "
+                         "training segments are mixed with accompaniment (training-only)")
+    ap.add_argument("--aug-prob", type=float, default=0.7,
+                    help="fraction of segments to augment when --accompaniment-dir is set")
+    ap.add_argument("--aug-seed", type=int, default=0, help="augmentation RNG seed")
     ap.add_argument("--out", type=Path, default=Path("checkpoints/seq2seq.pt"),
                     help="checkpoint output path")
     ap.add_argument("--eval-after", action="store_true", help="score a held-out split after training")
@@ -75,8 +81,23 @@ def main(argv: list[str] | None = None) -> int:
           + (f" (shuffled seed={args.shuffle_seed})" if args.shuffle_seed is not None else ""))
 
     tokenizer = DrumTokenizer(scheme=args.scheme)
-    frontend = LogMelFrontend()
-    dataset = ADTSegmentDataset(tracks, tokenizer, frontend)
+    frontend = LogMelFrontend()  # bare front-end; eval uses this (real mixes need no aug)
+
+    train_frontend = frontend
+    if args.accompaniment_dir is not None:
+        import json
+
+        from drumml.data.augment import AccompanimentMixer, MixingFrontend
+
+        snr = json.loads((args.accompaniment_dir / "snr_db.json").read_text())
+        mixer = AccompanimentMixer(
+            args.accompaniment_dir, snr, prob=args.aug_prob, seed=args.aug_seed
+        )
+        train_frontend = MixingFrontend(frontend, mixer)
+        print(f"augment: {len(mixer.paths)} accompaniment tracks, prob={args.aug_prob}, "
+              f"{len(snr)} empirical SNRs (median {sorted(snr)[len(snr)//2]:.1f} dB)")
+
+    dataset = ADTSegmentDataset(tracks, tokenizer, train_frontend)
     print(f"{len(dataset)} segments")
 
     config = Seq2SeqConfig(
