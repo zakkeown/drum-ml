@@ -27,6 +27,7 @@ src/drumml/
   model/seq2seq.py   MT3/T5-style encoder-decoder (~32M @ default config)
   data/torch_dataset.py  segmenting torch Dataset + collate
   train.py           teacher-forced training loop
+  transcribe.py      model + audio -> DrumAnnotation (inference bridge → eval)
 scripts/
   run_eval.py        CLI: score a prediction dir against a dataset
   train.py           CLI: train a seq2seq transcriber from a dataset adapter
@@ -65,6 +66,6 @@ pip install drumml[model,mert]  # + MERT foundation-model front-end
 
 1. ✅ Taxonomy + eval harness + adapters.
 2. ⬜ Reproduce the **ADTOF baseline** floor → `docs/reproduce_adtof_baseline.md` (needs external repo + data).
-3. ✅ MT3-style seq2seq **stack scaffolded & unit-tested** (tokenizer, LogMel/MERT front-ends, model, dataset, train loop). ⬜ Still to do: train on real E-GMD + STAR and confirm it matches/beats ADTOF cross-dataset.
+3. ✅ MT3-style seq2seq **stack scaffolded & unit-tested end-to-end** (tokenizer, LogMel/MERT front-ends, model, dataset, train loop, **inference bridge** `transcribe` → eval). Encoder-uses-audio verified by an overfit-then-greedy-decode test. ⬜ Still to do: train on real E-GMD + STAR and confirm it matches/beats ADTOF cross-dataset.
 4. ◑ **MERT front-end** wrapper present (`features.MERTFrontend`); ⬜ learned layer-weighting + fusion + OOD-delta measurement.
 5. ⬜ Velocity tokens (tokenizer supports them) + CLAP-curated synthetic into real backing tracks (DTM).
