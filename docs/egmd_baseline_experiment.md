@@ -86,36 +86,38 @@ clustered sample), not a measurement artefact.
 
 ## Follow-up: accompaniment-mixing augmentation (closing the OOD gap)
 
-The diverse model still over-generated on MDB (4.2× too many onsets, precision
-0.20) because it had never heard non-drum audio. Next intervention: overlay
+The diverse model still over-generated on MDB (2.15× too many onsets, precision
+0.28) because it had never heard non-drum audio. Next intervention: overlay
 drum-free accompaniment (MUSDB18 bass+other+vocals, 150 tracks) onto E-GMD drum
 segments at training time, mix SNR sampled from the **empirical** MUSDB
 drums-vs-accompaniment distribution (median −5.3 dB, 90% accompaniment-dominant —
 so the model is forced to find drums under *louder* accompaniment). Same diverse
 config, only the mixing added (`--accompaniment-dir`, aug-prob 0.7).
 
-OOD MDB (best epoch 7), vs the no-aug diverse model:
+OOD MDB at each model's best epoch, both measured on the **same 23 tracks** at
+max_len 192 (no-aug = epoch 6, +mix = epoch 7):
 
 | metric | diverse (no aug) | **diverse + mix** | floor |
 |---|---|---|---|
-| onset **density** (est/ref) | 4.2× | **1.19×** | 1.0 |
-| **precision** | 0.20 | **0.42** | — |
-| recall | 0.83 | 0.50 | — |
+| onset **density** (est/ref) | 2.15× | **1.19×** | 1.0 |
+| **precision** | 0.28 | **0.42** | — |
+| recall | 0.60 | 0.50 | — |
 | macro-F | 0.346 | **0.382** | 0.716 |
 | micro-F | 0.381 | **0.460** | 0.792 |
 
+(P/R are self-consistent with F: 0.28/0.60→0.382≈0.381; 0.42/0.50→0.457≈0.460.)
 In-domain E-GMD test dipped to 0.824 macro (from 0.938) — capacity spent on the
-harder mixed task. The **mechanism is confirmed**: augmentation crushed
-over-generation (4.2×→1.2×) and doubled precision (0.20→0.42), lifting OOD
-micro-F 0.381→0.460. Unlike the no-aug runs (OOD peaks ~epoch 5 then decays), the
-augmented OOD curve *rises* through epoch 7 with density falling monotonically
-(3.68×→1.19×) — a healthier transfer profile.
+harder mixed task. The **mechanism is confirmed**: augmentation roughly halved
+over-generation (2.15×→1.19×, toward the ideal 1.0) and raised precision by ~50%
+(0.28→0.42), lifting OOD micro-F 0.381→0.460. Unlike the no-aug runs (OOD peaks
+~epoch 5–6 then decays), the augmented OOD curve *rises* through epoch 7 with
+density falling monotonically (3.68×→1.19×) — a healthier transfer profile.
 
 **Reading:** synthetic full-mix data directly attacks the OOD failure mode and
 closes ~1/5 of the micro-F gap to the floor (0.381→0.460, floor 0.792). The
-remaining gap + the recall drop (0.83→0.50, the model now over-conservative on
-real mixes) are the next levers: MUSDB is a proxy for real recordings, 11M params
-is small, and real labelled full-mix data (ADTOF) is the eventual step.
+remaining gap + a modest recall drop (0.60→0.50, the model trades some recall for
+much higher precision) are the next levers: MUSDB is a proxy for real recordings,
+11M params is small, and real labelled full-mix data (ADTOF) is the eventual step.
 
 ## Reproduce
 
