@@ -1,7 +1,7 @@
 import pytest
 
 from drumml.data.adtof import annotation_from_adtof_labels
-from drumml.data.mdb import MDB_CLASS_LABELS
+from drumml.data.mdb import MDB_CLASS_LABELS, MDBDrumsAdapter
 from drumml.events import DrumAnnotation
 from drumml.taxonomy import Canonical
 
@@ -21,6 +21,38 @@ def test_mdb_strict_raises_on_unmapped():
         DrumAnnotation.from_label_rows("t", [(0.0, "???")], MDB_CLASS_LABELS, strict=True)
 
 
+def test_mdb_adapter_real_layout(tmp_path):
+    """The official checkout nests under 'MDB Drums/' and uses suffix-based joins.
+
+    Annotation stems carry '_class' while audio carries '_MIX', so the adapter
+    must derive the bare 'MusicDelta_<Genre>' track id and match audio by suffix.
+    """
+    base = tmp_path / "MDB Drums"
+    ann_dir = base / "annotations" / "class"
+    mix_dir = base / "audio" / "full_mix"
+    ann_dir.mkdir(parents=True)
+    mix_dir.mkdir(parents=True)
+    # Real files have stray spaces around the tab: "<onset> \t <label> ".
+    (ann_dir / "MusicDelta_Rock_class.txt").write_text(
+        "0.000000 \t KD \n0.020000 \t HH \n0.528254 \t SD \n0.700000 \t OT \n"
+    )
+    (mix_dir / "MusicDelta_Rock_MIX.wav").write_bytes(b"")  # presence is enough
+
+    tracks = list(MDBDrumsAdapter(tmp_path).tracks())
+    assert len(tracks) == 1
+    t = tracks[0]
+    assert t.track_id == "MusicDelta_Rock"
+    assert t.audio_path == mix_dir / "MusicDelta_Rock_MIX.wav"
+    # OT -> PERC drops out of the 5-class view; KD/HH/SD survive.
+    assert [e.canonical for e in t.annotation.events] == [
+        Canonical.KICK,
+        Canonical.HH_CLOSED,
+        Canonical.SNARE,
+        Canonical.PERC,
+    ]
+    assert set(t.annotation.onsets_by_class("5")) == {"KD", "HH", "SD"}
+
+
 def test_adtof_label_parser(tmp_path):
     f = tmp_path / "song.txt"
     f.write_text("0.000000\t36\n0.500000\t38\n1.000000\t42\n1.500000\t49\n")
@@ -32,6 +64,32 @@ def test_adtof_label_parser(tmp_path):
         Canonical.HH_CLOSED,
         Canonical.CRASH,
     ]
+
+
+def test_adtof_midi_parser_maps_labels5(tmp_path):
+    """ADTOF-pytorch emits MIDI at LABELS_5 pitches 35/38/47/42/49 -> KD/SD/TT/HH/CY."""
+    pretty_midi = pytest.importorskip("pretty_midi")
+    from drumml.data.adtof import annotation_from_adtof_midi
+
+    pm = pretty_midi.PrettyMIDI()
+    inst = pretty_midi.Instrument(program=0, is_drum=True)
+    for t, pitch in [(0.0, 35), (0.25, 38), (0.5, 47), (0.75, 42), (1.0, 49)]:
+        inst.notes.append(pretty_midi.Note(velocity=100, pitch=pitch, start=t, end=t + 0.05))
+    pm.instruments.append(inst)
+    midi_path = tmp_path / "song.mid"
+    pm.write(str(midi_path))
+
+    ann = annotation_from_adtof_midi(midi_path)
+    assert ann.track_id == "song"
+    assert [e.canonical for e in ann.events] == [
+        Canonical.KICK,
+        Canonical.SNARE,
+        Canonical.TOM_MID,
+        Canonical.HH_CLOSED,
+        Canonical.CRASH,
+    ]
+    # the 5 classes reduce 1:1 onto the 5-class scheme used for scoring
+    assert set(ann.onsets_by_class("5")) == {"KD", "SD", "TT", "HH", "CY"}
 
 
 def _write_drum_midi(pretty_midi, path, pitch=36):
