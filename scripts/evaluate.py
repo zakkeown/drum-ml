@@ -40,15 +40,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--limit", type=int, default=None, help="cap #tracks scored")
     ap.add_argument("--scheme", default=None, help="override eval scheme (default: tokenizer's)")
     ap.add_argument("--max-len", type=int, default=1024)
-    ap.add_argument("--device", default="cpu")
+    ap.add_argument("--device", default="auto", help="auto | mps | cuda | cpu")
     args = ap.parse_args(argv)
 
     from drumml.checkpoint import load_checkpoint
     from drumml.eval import aggregate, format_report, score_track
     from drumml.features import LogMelFrontend
+    from drumml.train import pick_device
     from drumml.transcribe import transcribe_dataset
 
-    model, tokenizer, _ = load_checkpoint(args.checkpoint, device=args.device)
+    device = pick_device(args.device)
+    print(f"device: {device}")
+    model, tokenizer, _ = load_checkpoint(args.checkpoint, device=device)
     scheme = args.scheme or tokenizer.scheme
 
     adapter = build_adapter(args.dataset, args.root, args.split)
@@ -60,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     frontend = LogMelFrontend()
     preds = transcribe_dataset(
         model, tracks, tokenizer, frontend,
-        max_len=args.max_len, device=args.device,
+        max_len=args.max_len, device=device,
         on_track=lambda i, tid: (i % 50 == 0) and print(f"  transcribed {i} ..."),
     )
 

@@ -51,6 +51,14 @@ def _config(tok):
     )
 
 
+def test_pick_device():
+    from drumml.train import pick_device
+
+    assert pick_device("cpu") == "cpu"
+    assert pick_device("cuda") == "cuda"  # explicit choices pass through
+    assert pick_device("auto") in {"mps", "cuda", "cpu"}
+
+
 def test_checkpoint_round_trip_is_faithful(tmp_path):
     torch.manual_seed(0)
     tok = DrumTokenizer()

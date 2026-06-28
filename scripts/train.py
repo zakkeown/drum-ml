@@ -39,7 +39,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--d-model", type=int, default=512)
-    ap.add_argument("--device", default="cpu")
+    ap.add_argument("--device", default="auto", help="auto | mps | cuda | cpu")
+    ap.add_argument("--num-workers", type=int, default=4, help="DataLoader workers (feed the GPU)")
     ap.add_argument("--split", default="train", help="train split (egmd: train/validation/test)")
     ap.add_argument("--limit", type=int, default=None, help="cap #tracks (smoke runs)")
     ap.add_argument("--out", type=Path, default=Path("checkpoints/seq2seq.pt"),
@@ -54,7 +55,10 @@ def main(argv: list[str] | None = None) -> int:
     from drumml.features import LogMelFrontend
     from drumml.model import Seq2SeqADT, Seq2SeqConfig
     from drumml.tokenize import DrumTokenizer
-    from drumml.train import train
+    from drumml.train import pick_device, train
+
+    device = pick_device(args.device)
+    print(f"device: {device}")
 
     adapter = build_adapter(args.dataset, args.root, args.split)
     tracks = list(adapter.tracks())
@@ -87,7 +91,8 @@ def main(argv: list[str] | None = None) -> int:
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,
-        device=args.device,
+        device=device,
+        num_workers=args.num_workers,
         on_step=log,
     )
     print(f"done. final loss {history[-1]:.4f}")
@@ -102,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         eval_adapter = build_adapter(args.dataset, args.root, args.eval_split)
         eval_tracks = list(eval_adapter.tracks())[: args.eval_limit]
         print(f"\nevaluating on {len(eval_tracks)} {args.eval_split} tracks ...")
-        preds = transcribe_dataset(model, eval_tracks, tokenizer, frontend, device=args.device)
+        preds = transcribe_dataset(model, eval_tracks, tokenizer, frontend, device=device)
         scores = [
             score_track(t.annotation, preds[t.track_id], args.scheme)
             for t in eval_tracks

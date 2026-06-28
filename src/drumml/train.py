@@ -17,6 +17,17 @@ from torch.utils.data import DataLoader, Dataset
 from drumml.data.torch_dataset import collate_segments
 
 
+def pick_device(name: str = "auto") -> str:
+    """Resolve "auto" to the best available backend (MPS on Apple Silicon)."""
+    if name != "auto":
+        return name
+    if torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+
 def compute_loss(model: torch.nn.Module, batch: dict, pad_id: int) -> torch.Tensor:
     """Teacher-forced cross-entropy for one collated batch."""
     feats = batch["features"]
