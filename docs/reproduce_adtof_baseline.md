@@ -71,3 +71,27 @@ don't tune.
 
 That ADTOF micro-F is the floor every later iteration (our MT3-style seq2seq,
 then + MERT) must clear.
+
+## Result (reproduced 2026-06-28)
+
+ADTOF-pytorch on standard MDB-Drums full-mix, 23 tracks, scheme 5, ±50 ms:
+
+```
+class     ref    est     tp      F
+KD       1539   1609   1335   0.848
+SD       2654   1861   1582   0.701
+TT         90    238     57   0.348
+HH       2639   2327   2110   0.850
+CY       1002   1101    876   0.833
+--------------------------------------
+micro-F (SUM, the comparable metric)   0.792   -> WITHIN 0.76-0.81
+macro-F (pooled)                       0.716
+macro-F (per-track mean)               0.775
+```
+
+**micro-F 0.792 reproduces the published baseline.** Per-class is sensible:
+kick/hihat/cymbal ~0.83–0.85, snare 0.70; toms are the weak spot (F 0.35, only
+90 reference onsets and the model over-predicts them — e.g. 62 false toms on the
+sparse ride-driven 80sRock track). No systematic class swap: dataset-wide HH est
+(2327) tracks HH ref (2639), confirming the tom/hihat pitch assignment is
+correct. **This 0.792 micro-F is our floor.**

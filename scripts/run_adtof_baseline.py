@@ -95,6 +95,23 @@ def main(argv: list[str] | None = None) -> int:
 
     # --- aggregate report + comparison to the published band -----------------
     ds = aggregate(scores, name=f"adtof/mdb-{args.mix}")
+
+    # Dataset-wide per-class ref/est/tp counts — the decisive sanity check.
+    # A systematic class swap (e.g. tom<->hihat pitch assignment) shows up as
+    # est counts that don't track the reference's class balance.
+    from drumml.taxonomy import scheme_classes
+    pooled: dict[str, list[int]] = {c: [0, 0, 0] for c in scheme_classes(args.scheme)}
+    for t in scores:
+        for c, cs in t.per_class.items():
+            pooled[c][0] += cs.n_ref
+            pooled[c][1] += cs.n_est
+            pooled[c][2] += cs.tp
+    print(f"\ndataset-wide onset counts (scheme {args.scheme}):")
+    print(f"  {'class':<6} {'ref':>6} {'est':>6} {'tp':>6}")
+    for c in scheme_classes(args.scheme):
+        ref, est, tp = pooled[c]
+        print(f"  {c:<6} {ref:>6} {est:>6} {tp:>6}")
+
     print("\n" + format_report(ds))
     lo, hi = PUBLISHED_MDB_F
     verdict = "WITHIN" if lo - 0.03 <= ds.micro_f <= hi + 0.03 else "OUTSIDE"
