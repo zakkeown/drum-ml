@@ -51,6 +51,31 @@ pip install drumml[model]     # + training stack (torch, torchaudio, soundfile)
 pip install drumml[model,mert]  # + MERT foundation-model front-end
 ```
 
+## Running a training / eval experiment
+
+Once a dataset is on disk (e.g. E-GMD at `datasets/e-gmd`), the full
+train → checkpoint → transcribe → score loop is one command. Start with a tiny
+**smoke run** to validate end-to-end on real audio:
+
+```bash
+# smoke: 50 tracks, small model, then score 20 held-out tracks
+uv run python scripts/train.py --dataset egmd --root datasets/e-gmd \
+    --split train --limit 50 --epochs 2 --d-model 128 \
+    --out checkpoints/smoke.pt --eval-after --eval-split test --eval-limit 20
+```
+
+Then a real run, and score a saved checkpoint separately:
+
+```bash
+uv run python scripts/train.py --dataset egmd --root datasets/e-gmd --epochs 20
+uv run python scripts/evaluate.py --checkpoint checkpoints/seq2seq.pt \
+    --dataset egmd --root datasets/e-gmd --split test
+```
+
+Checkpoints are self-describing (carry model config + tokenizer params), so
+`evaluate.py` needs only the `.pt` file. Cross-dataset (OOD) scoring = train on
+one corpus, evaluate against another (`drumml.eval.cross_dataset_macro_f`).
+
 ## Design decisions baked in
 
 - **One canonical taxonomy, collapsed per benchmark.** Train rich; evaluate at 3,

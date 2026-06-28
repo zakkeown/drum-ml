@@ -10,13 +10,22 @@ is what makes a trained model *measurable*. Requires the ``model`` extra (torch)
 from __future__ import annotations
 
 import math
-from typing import Optional
+import warnings
+from typing import Callable, Iterable, Optional
 
 import numpy as np
 import torch
 
 from drumml.events import DrumAnnotation
 from drumml.tokenize import DrumTokenizer
+
+
+def _default_load_audio(path) -> tuple[np.ndarray, int]:
+    """Lazy soundfile mono loader (mirrors drumml.data.torch_dataset)."""
+    import soundfile as sf
+
+    wav, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    return np.asarray(wav), int(sr)
 
 
 def _to_mono(waveform) -> np.ndarray:
@@ -74,3 +83,53 @@ def transcribe(
         events.extend(seg_ann.events)
 
     return DrumAnnotation(track_id=track_id, events=events)
+
+
+def transcribe_track(
+    model: torch.nn.Module,
+    track,
+    tokenizer: DrumTokenizer,
+    frontend,
+    *,
+    load_audio: Optional[Callable] = None,
+    max_len: int = 1024,
+    device: str = "cpu",
+) -> DrumAnnotation:
+    """Load a :class:`~drumml.data.base.Track`'s audio and transcribe it."""
+    load_audio = load_audio or _default_load_audio
+    waveform, sr = load_audio(track.audio_path)
+    return transcribe(
+        model, waveform, sr, tokenizer, frontend,
+        max_len=max_len, device=device, track_id=track.track_id,
+    )
+
+
+def transcribe_dataset(
+    model: torch.nn.Module,
+    tracks: Iterable,
+    tokenizer: DrumTokenizer,
+    frontend,
+    *,
+    load_audio: Optional[Callable] = None,
+    max_len: int = 1024,
+    device: str = "cpu",
+    on_track: Optional[Callable[[int, str], None]] = None,
+) -> dict[str, DrumAnnotation]:
+    """Transcribe many tracks -> ``{track_id: DrumAnnotation}``.
+
+    Tracks whose audio is missing/unreadable are skipped with a warning (so a
+    single bad file doesn't abort a whole evaluation run).
+    """
+    out: dict[str, DrumAnnotation] = {}
+    for i, track in enumerate(tracks):
+        try:
+            out[track.track_id] = transcribe_track(
+                model, track, tokenizer, frontend,
+                load_audio=load_audio, max_len=max_len, device=device,
+            )
+        except Exception as exc:  # noqa: BLE001 - skip unreadable tracks, keep going
+            warnings.warn(f"skipping {track.track_id!r}: {exc}", stacklevel=2)
+            continue
+        if on_track is not None:
+            on_track(i, track.track_id)
+    return out

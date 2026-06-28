@@ -16,14 +16,16 @@ import argparse
 from pathlib import Path
 
 
-def build_adapter(name: str, root: Path):
+def build_adapter(name: str, root: Path, split: str | None = None):
     if name == "egmd":
         from drumml.data.egmd import EGMDAdapter
 
-        return EGMDAdapter(root)
+        return EGMDAdapter(root, split=split)
     if name == "mdb":
         from drumml.data.mdb import MDBDrumsAdapter
 
+        if split:
+            print(f"(note: MDB has no splits; ignoring split {split!r})")
         return MDBDrumsAdapter(root)
     raise SystemExit(f"unknown dataset adapter {name!r} (have: egmd, mdb)")
 
@@ -38,33 +40,39 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--d-model", type=int, default=512)
     ap.add_argument("--device", default="cpu")
+    ap.add_argument("--split", default="train", help="train split (egmd: train/validation/test)")
     ap.add_argument("--limit", type=int, default=None, help="cap #tracks (smoke runs)")
+    ap.add_argument("--out", type=Path, default=Path("checkpoints/seq2seq.pt"),
+                    help="checkpoint output path")
+    ap.add_argument("--eval-after", action="store_true", help="score a held-out split after training")
+    ap.add_argument("--eval-split", default="test")
+    ap.add_argument("--eval-limit", type=int, default=100)
     args = ap.parse_args(argv)
 
+    from drumml.checkpoint import save_checkpoint
     from drumml.data.torch_dataset import ADTSegmentDataset
     from drumml.features import LogMelFrontend
     from drumml.model import Seq2SeqADT, Seq2SeqConfig
     from drumml.tokenize import DrumTokenizer
     from drumml.train import train
 
-    adapter = build_adapter(args.dataset, args.root)
+    adapter = build_adapter(args.dataset, args.root, args.split)
     tracks = list(adapter.tracks())
     if args.limit:
         tracks = tracks[: args.limit]
-    print(f"{len(tracks)} tracks from {adapter.name}")
+    print(f"{len(tracks)} tracks from {adapter.name}/{args.split}")
 
     tokenizer = DrumTokenizer(scheme=args.scheme)
     frontend = LogMelFrontend()
     dataset = ADTSegmentDataset(tracks, tokenizer, frontend)
     print(f"{len(dataset)} segments")
 
-    model = Seq2SeqADT(
-        Seq2SeqConfig(
-            feature_dim=frontend.feature_dim,
-            vocab_size=tokenizer.vocab_size,
-            d_model=args.d_model,
-        )
+    config = Seq2SeqConfig(
+        feature_dim=frontend.feature_dim,
+        vocab_size=tokenizer.vocab_size,
+        d_model=args.d_model,
     )
+    model = Seq2SeqADT(config)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"model: {n_params/1e6:.1f}M params, vocab={tokenizer.vocab_size}")
 
@@ -83,6 +91,25 @@ def main(argv: list[str] | None = None) -> int:
         on_step=log,
     )
     print(f"done. final loss {history[-1]:.4f}")
+
+    save_checkpoint(args.out, model, config, tokenizer)
+    print(f"saved checkpoint -> {args.out}")
+
+    if args.eval_after:
+        from drumml.eval import aggregate, format_report, score_track
+        from drumml.transcribe import transcribe_dataset
+
+        eval_adapter = build_adapter(args.dataset, args.root, args.eval_split)
+        eval_tracks = list(eval_adapter.tracks())[: args.eval_limit]
+        print(f"\nevaluating on {len(eval_tracks)} {args.eval_split} tracks ...")
+        preds = transcribe_dataset(model, eval_tracks, tokenizer, frontend, device=args.device)
+        scores = [
+            score_track(t.annotation, preds[t.track_id], args.scheme)
+            for t in eval_tracks
+            if t.track_id in preds
+        ]
+        if scores:
+            print(format_report(aggregate(scores, name=f"{adapter.name}/{args.eval_split}")))
     return 0
 
 
