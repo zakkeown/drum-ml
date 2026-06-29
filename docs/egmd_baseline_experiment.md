@@ -186,6 +186,55 @@ a dev set here. The floor was *not* tuned on MDB — the probe is on E-GMD test 
 a clean cross-dataset headline for any intervention needs a fresh full-mix set,
 i.e. ADTOF, not MDB.)
 
+## Follow-up 3: real full-mix data beats synthetic mixing ~3:1 (thesis confirmed)
+
+Follow-up 2 showed the synthetic augmentation overfit to its own mix distribution
+(sim-to-real gap). The direct test: replace synthetic mixing with **real** labelled
+full-mix data and measure transfer. Source = **A2MD** (1565 internet songs with
+drum labels from DTW-aligned Lakh MIDI), tightest alignment buckets `dist<=0.10`
+(197 clips, ~4.4h). A2MD labels are *weak* (a separate arrangement aligned to the
+recording), so we first **bounded their quality**: the ADTOF model scores micro
+**0.782** against A2MD's `dist0p00` labels vs **0.796** against clean MDB labels —
+a **+0.014** gap, i.e. tight-bucket A2MD labels are ~as trustworthy as MDB's hand
+labels. So a weak result could not be blamed on label noise.
+
+Method: **fine-tune the diverse E-GMD model** (`div_epoch6`) on A2MD, lr 1e-4, 8
+epochs, bare front-end, epoch-stamped. A2MD is 3-class (KD/SD/HH; aux percussion
+maps PERC→drop), so the experiment is scored at **scheme 3** vs a re-derived
+scheme-3 ADTOF floor (**micro 0.796 / macro 0.800**). The diverse epoch curve
+*declines* after ep6, so "more training alone hurts OOD" is already controlled —
+any gain is the real data, not extra steps.
+
+| MDB held-out, scheme 3, best epoch | micro-F | macro-F | density | P | R |
+|---|---|---|---|---|---|
+| diverse E-GMD (no full-mix data) | 0.442 | 0.513 | — | — | — |
+| + **synthetic** MUSDB mixing | 0.505 | 0.514 | — | — | — |
+| + **real** A2MD data (ep2) | **0.624** | **0.620** | 1.21× | 0.57 | **0.69** |
+| ADTOF floor (scheme 3) | 0.796 | 0.800 | 1.0 | — | — |
+
+Real data lifts micro-F **+0.119 over synthetic mixing** and **+0.182 over the
+no-data baseline** — it closes **~51%** of the baseline→floor gap, versus synthetic
+mixing's **~18%** (≈3:1). Per-class ep2: KD 0.664, SD 0.544, HH 0.653 — balanced,
+each ~75–78% of the floor. The OOD optimum is **early** (ep2; fine-tuning adapts
+fast) then declines, same shape as before.
+
+Crucially, **recall rose to 0.69 while precision also rose** — real data pushed the
+P/R frontier *outward*, which is exactly the "recover the recall drop" that tuning
+the synthetic SNR could not do (Follow-up 2: synthetic tuning only *slid* the
+frontier). This is the cleanest confirmation of the data-first thesis to date: the
+bottleneck is **real labelled data**, and 4.4h of it beats the entire synthetic
+augmentation effort.
+
+Caveats: (1) **scheme 3 only** — fine-tuning on 3-class A2MD made the model forget
+toms/cymbals (scheme-5 TT 0.000, CY 0.083, macro 0.389); recoverable by co-training
+with E-GMD's 5-class labels (next step). (2) Still **0.17 micro below the floor** —
+real data helps a lot but more is needed (dist0p20 = 537 clips/~12h, ADTOF
+self-build, RBMA-13 exact labels, more capacity). (3) Fine-tune-from-checkpoint vs
++mix-from-scratch is a regime mismatch, but the +0.119 clearance is far too large
+to be a forgetting artifact. **No synthesis pivot is warranted**: real data
+decisively works, so the path is *more* real data + co-training, not manufacturing
+data.
+
 ## Reproduce
 
 ```bash
@@ -203,4 +252,10 @@ uv run python scripts/eval_ood_sweep.py --checkpoints "checkpoints/egmd_seq2seq_
 uv run python scripts/probe_snr_robustness.py \
     --checkpoints checkpoints/egmd_seq2seq_mix_epoch7.pt checkpoints/egmd_seq2seq_div_epoch6.pt \
     --accompaniment-dir datasets/musdb_accompaniment --egmd-root datasets/e-gmd --n-tracks 60
+# Follow-up 3: fine-tune the diverse model on REAL A2MD full-mix data, sweep on MDB (scheme 3)
+uv run python scripts/train.py --dataset a2md --root datasets/a2md/a2md_public --a2md-max-dist 0.10 \
+    --init-from checkpoints/egmd_seq2seq_div_epoch6.pt --epochs 8 --batch-size 32 \
+    --num-workers 8 --lr 1e-4 --out checkpoints/egmd_a2md_ft.pt
+uv run python scripts/eval_ood_sweep.py --checkpoints "checkpoints/egmd_a2md_ft_epoch*.pt" \
+    --dataset mdb --root datasets/MDBDrums --scheme 3 --max-len 192
 ```

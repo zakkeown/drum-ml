@@ -16,7 +16,7 @@ import argparse
 from pathlib import Path
 
 
-def build_adapter(name: str, root: Path, split: str | None = None):
+def build_adapter(name: str, root: Path, split: str | None = None, a2md_max_dist: float = 0.10):
     if name == "egmd":
         from drumml.data.egmd import EGMDAdapter
 
@@ -27,13 +27,24 @@ def build_adapter(name: str, root: Path, split: str | None = None):
         if split:
             print(f"(note: MDB has no splits; ignoring split {split!r})")
         return MDBDrumsAdapter(root)
-    raise SystemExit(f"unknown dataset adapter {name!r} (have: egmd, mdb)")
+    if name == "a2md":
+        from drumml.data.a2md import A2MDAdapter
+
+        if split:
+            print(f"(note: A2MD has no splits; ignoring split {split!r})")
+        return A2MDAdapter(root, max_dist=a2md_max_dist)
+    raise SystemExit(f"unknown dataset adapter {name!r} (have: egmd, mdb, a2md)")
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dataset", required=True, help="adapter: egmd | mdb")
+    ap.add_argument("--dataset", required=True, help="adapter: egmd | mdb | a2md")
     ap.add_argument("--root", required=True, type=Path)
+    ap.add_argument("--init-from", type=Path, default=None,
+                    help="fine-tune: init model+tokenizer+config from this checkpoint "
+                         "(ignores --scheme/--d-model, which come from the checkpoint)")
+    ap.add_argument("--a2md-max-dist", type=float, default=0.10,
+                    help="A2MD: keep alignment-distance buckets <= this (label quality vs quantity)")
     ap.add_argument("--scheme", default="5", choices=["3", "5", "8", "canonical"])
     ap.add_argument("--epochs", type=int, default=5)
     ap.add_argument("--batch-size", type=int, default=16)
@@ -69,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     device = pick_device(args.device)
     print(f"device: {device}")
 
-    adapter = build_adapter(args.dataset, args.root, args.split)
+    adapter = build_adapter(args.dataset, args.root, args.split, args.a2md_max_dist)
     tracks = list(adapter.tracks())
     if args.shuffle_seed is not None:
         import random
@@ -80,7 +91,18 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(tracks)} tracks from {adapter.name}/{args.split}"
           + (f" (shuffled seed={args.shuffle_seed})" if args.shuffle_seed is not None else ""))
 
-    tokenizer = DrumTokenizer(scheme=args.scheme)
+    if args.init_from is not None:
+        from drumml.checkpoint import load_checkpoint
+
+        init_model, tokenizer, init_config = load_checkpoint(args.init_from, device=device)
+        print(f"fine-tune: init from {args.init_from} (scheme={tokenizer.scheme}, "
+              f"d_model={init_config.d_model}, vocab={tokenizer.vocab_size})")
+        if args.scheme != tokenizer.scheme:
+            print(f"  (note: --scheme {args.scheme} ignored; using checkpoint scheme "
+                  f"{tokenizer.scheme})")
+    else:
+        init_model = init_config = None
+        tokenizer = DrumTokenizer(scheme=args.scheme)
     frontend = LogMelFrontend()  # bare front-end; eval uses this (real mixes need no aug)
 
     train_frontend = frontend
@@ -100,12 +122,15 @@ def main(argv: list[str] | None = None) -> int:
     dataset = ADTSegmentDataset(tracks, tokenizer, train_frontend)
     print(f"{len(dataset)} segments")
 
-    config = Seq2SeqConfig(
-        feature_dim=frontend.feature_dim,
-        vocab_size=tokenizer.vocab_size,
-        d_model=args.d_model,
-    )
-    model = Seq2SeqADT(config)
+    if init_model is not None:
+        model, config = init_model, init_config
+    else:
+        config = Seq2SeqConfig(
+            feature_dim=frontend.feature_dim,
+            vocab_size=tokenizer.vocab_size,
+            d_model=args.d_model,
+        )
+        model = Seq2SeqADT(config)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"model: {n_params/1e6:.1f}M params, vocab={tokenizer.vocab_size}")
 
@@ -157,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
         from drumml.eval import aggregate, format_report, score_track
         from drumml.transcribe import transcribe_dataset
 
-        eval_adapter = build_adapter(args.dataset, args.root, args.eval_split)
+        eval_adapter = build_adapter(args.dataset, args.root, args.eval_split, args.a2md_max_dist)
         eval_tracks = list(eval_adapter.tracks())[: args.eval_limit]
         print(f"\nevaluating on {len(eval_tracks)} {args.eval_split} tracks ...")
         preds = transcribe_dataset(model, eval_tracks, tokenizer, frontend, device=device)

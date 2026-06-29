@@ -128,6 +128,51 @@ def test_egmd_adapter_hf_mirror_layout(tmp_path):
     assert [t.track_id for t in only_test] == ["x"]
 
 
+def _write_a2md_track(pretty_midi, root, bucket, idx, msd, pitches_times):
+    """Write a paired align_mid/<bucket> MIDI + an (empty) ytd_audio/<bucket> mp3."""
+    mid = root / "align_mid" / bucket / f"align_mid_{idx}_{msd}.mid"
+    mid.parent.mkdir(parents=True, exist_ok=True)
+    pm = pretty_midi.PrettyMIDI()
+    inst = pretty_midi.Instrument(program=0, is_drum=True)
+    for pitch, t in pitches_times:
+        inst.notes.append(pretty_midi.Note(velocity=100, pitch=pitch, start=t, end=t + 0.05))
+    pm.instruments.append(inst)
+    pm.write(str(mid))
+    mp3 = root / "ytd_audio" / bucket / f"ytd_audio_{idx}_{msd}.mp3"
+    mp3.parent.mkdir(parents=True, exist_ok=True)
+    mp3.touch()  # adapter only checks existence; audio is read downstream by soundfile
+
+
+def test_a2md_adapter_pairs_buckets_and_filters(tmp_path):
+    """A2MD: pair align_mid<->ytd_audio by id, honor max_dist, drop aux-perc + empties."""
+    pretty_midi = pytest.importorskip("pretty_midi")
+    from drumml.data.a2md import A2MDAdapter
+
+    root = tmp_path / "a2md_public"
+    # tightest bucket: KD(36) + SD(38) + HH(42) + tambourine(54, -> PERC, drops at scheme 3)
+    _write_a2md_track(pretty_midi, root, "dist0p00", "00000", "TRAAA",
+                      [(36, 0.0), (38, 0.5), (42, 0.7), (54, 0.9)])
+    # looser bucket, beyond max_dist=0.10 -> excluded
+    _write_a2md_track(pretty_midi, root, "dist0p20", "00001", "TRBBB",
+                      [(36, 0.0), (38, 0.2)])
+
+    tracks = list(A2MDAdapter(root, max_dist=0.10, min_onsets=1).tracks())
+    assert len(tracks) == 1  # dist0p20 excluded by max_dist
+    t = tracks[0]
+    assert t.track_id == "dist0p00_00000_TRAAA"
+    assert t.audio_path.name == "ytd_audio_00000_TRAAA.mp3"
+    assert t.audio_path.exists()
+    # aux percussion (tambourine) maps to PERC and is dropped at scheme 3
+    sch3 = {c: len(v) for c, v in t.annotation.onsets_by_class("3").items()}
+    assert sch3 == {"KD": 1, "SD": 1, "HH": 1}
+
+    # raising max_dist pulls in the looser bucket
+    assert len(list(A2MDAdapter(root, max_dist=0.20, min_onsets=1).tracks())) == 2
+
+    # min_onsets drops near-empty drum parts
+    assert list(A2MDAdapter(root, max_dist=0.10, min_onsets=99).tracks()) == []
+
+
 def test_egmd_midi_round_trip(tmp_path):
     pretty_midi = pytest.importorskip("pretty_midi")
     from drumml.data.egmd import annotation_from_midi
