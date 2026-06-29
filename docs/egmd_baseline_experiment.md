@@ -229,24 +229,31 @@ synthetic distribution — it adapts the already-general model a little, rather 
 letting it memorize MUSDB seams over 8 from-scratch epochs. The regime *fixes* the
 sim-to-real overfitting that Follow-up 2 diagnosed.
 
-Two real (if modest) edges for real data remain: it reaches the tie with **~4.5×
-fewer segments** (7.8k vs 35k — more data-efficient), and it holds **higher recall**
-(0.69 vs 0.64) at slightly lower precision. Both models push the P/R frontier well
-past the from-scratch +mix (P 0.49 / R 0.52). The OOD optimum is early for both
+Real data's cleaner edge is **higher recall** (0.69 vs 0.64) — the *same* per-class
+signature (synthetic mixing suppresses recall on real audio) that Follow-up 2 used
+to tell the two apart, so the aggregate-F "tie" partly masks a real-favoring
+mechanism. (Real also reached the tie with ~4.5× fewer segments, but an ~80 s A2MD
+song-clip and an E-GMD groove segment aren't the same unit and epochs differ, so
+treat data-efficiency as a hedge, not a result.) Both models push the P/R frontier
+well past the from-scratch +mix (P 0.49 / R 0.52); OOD optimum is early for both
 (real ep2, synthetic ep3) then declines.
 
 Caveats: (1) **scheme 3 only** — fine-tuning on 3-class A2MD made the model forget
 toms/cymbals (scheme-5 TT 0.000, CY 0.083, macro 0.389); recoverable by co-training
-with E-GMD's 5-class labels. (2) Still **~0.17 micro below the floor**. (3) The
-synthetic fine-tune used more (E-GMD+MUSDB) segments than A2MD; matched-data and
-co-training comparisons are the natural follow-ups.
+with E-GMD's 5-class labels. (2) Still **~0.17 micro below the floor**. (3) **The
+control is NOT data-matched** — synthetic FT saw 35.5k segments / 4 epochs, real FT
+7.8k / 8 — so this experiment does not settle real-vs-synthetic on its own.
 
-**Revised reading for the "do we pivot to synthesis?" question:** *more* favorable
-to synthesis, not less. Synthetic mixing, used in the right (fine-tune) regime,
-**equals** our scarce real data on transfer — and synthetic is infinitely scalable.
-So synthesis is re-validated as a co-equal lever, and the likely best path is
-**hybrid** (real to anchor + for efficiency, synthetic for scale), both via gentle
-fine-tuning, with realism improvements (Zehren-style) on the synthetic side.
+**Revised reading for the "do we pivot to synthesis?" question: still open.** What
+this experiment settles is that the **fine-tune regime is the lever** and *both*
+data sources are viable in it (~0.62). It does **not** settle real-vs-synthetic:
+the control is un-matched on data quantity (synthetic had 4.5× more and only tied —
+if anything that cuts against synthetic), and the recall mechanism mildly favors
+real. So no strategic lean either way yet. The **deciding experiment** is a
+**data-matched** real-vs-synthetic fine-tune (same segment count + epochs) plus a
+co-train (E-GMD 5-class + real, to restore toms/cymbals and test whether real adds
+on top of synthetic). Until that runs, treat synthesis as still-on-the-table, not
+favored.
 
 ## Reproduce
 
