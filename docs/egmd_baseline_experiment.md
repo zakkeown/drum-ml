@@ -186,54 +186,67 @@ a dev set here. The floor was *not* tuned on MDB — the probe is on E-GMD test 
 a clean cross-dataset headline for any intervention needs a fresh full-mix set,
 i.e. ADTOF, not MDB.)
 
-## Follow-up 3: real full-mix data beats synthetic mixing ~3:1 (thesis confirmed)
+## Follow-up 3: the *fine-tune regime* is the lever; real ≈ synthetic data in it
 
-Follow-up 2 showed the synthetic augmentation overfit to its own mix distribution
-(sim-to-real gap). The direct test: replace synthetic mixing with **real** labelled
-full-mix data and measure transfer. Source = **A2MD** (1565 internet songs with
-drum labels from DTW-aligned Lakh MIDI), tightest alignment buckets `dist<=0.10`
-(197 clips, ~4.4h). A2MD labels are *weak* (a separate arrangement aligned to the
-recording), so we first **bounded their quality**: the ADTOF model scores micro
-**0.782** against A2MD's `dist0p00` labels vs **0.796** against clean MDB labels —
-a **+0.014** gap, i.e. tight-bucket A2MD labels are ~as trustworthy as MDB's hand
-labels. So a weak result could not be blamed on label noise.
+Follow-up 2 showed the from-scratch synthetic-mixing model overfit its own mix
+distribution (sim-to-real gap). The test here: bring in **real** labelled full-mix
+data and measure transfer — but with a regime control that turned out to flip the
+conclusion. Real source = **A2MD** (1565 internet songs with drum labels from
+DTW-aligned Lakh MIDI), tightest buckets `dist<=0.10` (197 clips, ~4.4h). A2MD
+labels are *weak* (a separate arrangement aligned to the recording), so we first
+**bounded their quality**: the ADTOF model scores micro **0.782** against `dist0p00`
+labels and **0.887** against `dist0p10` labels, vs **0.796** against clean MDB —
+i.e. tight-bucket A2MD labels are ~as trustworthy as MDB hand labels, so a weak
+result can't be blamed on label noise.
 
-Method: **fine-tune the diverse E-GMD model** (`div_epoch6`) on A2MD, lr 1e-4, 8
-epochs, bare front-end, epoch-stamped. A2MD is 3-class (KD/SD/HH; aux percussion
-maps PERC→drop), so the experiment is scored at **scheme 3** vs a re-derived
-scheme-3 ADTOF floor (**micro 0.796 / macro 0.800**). The diverse epoch curve
-*declines* after ep6, so "more training alone hurts OOD" is already controlled —
-any gain is the real data, not extra steps.
+Method: **fine-tune the diverse E-GMD model** (`div_epoch6`), lr 1e-4, epoch-stamped,
+bare front-end, scored at **scheme 3** (A2MD is 3-class; aux percussion maps
+PERC→drop) vs a re-derived scheme-3 ADTOF floor (**micro 0.796 / macro 0.800**).
+Crucially we run **two** fine-tunes from the *same* checkpoint — one on real A2MD,
+one on the *synthetic* MUSDB mixing — so "real vs synthetic" is isolated from
+"fine-tune vs from-scratch".
 
 | MDB held-out, scheme 3, best epoch | micro-F | macro-F | density | P | R |
 |---|---|---|---|---|---|
-| diverse E-GMD (no full-mix data) | 0.442 | 0.513 | — | — | — |
-| + **synthetic** MUSDB mixing | 0.505 | 0.514 | — | — | — |
-| + **real** A2MD data (ep2) | **0.624** | **0.620** | 1.21× | 0.57 | **0.69** |
+| diverse E-GMD (no full-mix data) | 0.442 | 0.513 | 2.07× | 0.33 | 0.68 |
+| + synthetic MUSDB mixing, **from scratch** | 0.505 | 0.514 | 1.06× | 0.49 | 0.52 |
+| + synthetic MUSDB mixing, **fine-tune** (control) | 0.620 | **0.635** | 1.07× | 0.60 | 0.64 |
+| + **real** A2MD data, **fine-tune** | **0.624** | 0.620 | 1.21× | 0.57 | **0.69** |
 | ADTOF floor (scheme 3) | 0.796 | 0.800 | 1.0 | — | — |
 
-Real data lifts micro-F **+0.119 over synthetic mixing** and **+0.182 over the
-no-data baseline** — it closes **~51%** of the baseline→floor gap, versus synthetic
-mixing's **~18%** (≈3:1). Per-class ep2: KD 0.664, SD 0.544, HH 0.653 — balanced,
-each ~75–78% of the floor. The OOD optimum is **early** (ep2; fine-tuning adapts
-fast) then declines, same shape as before.
+**The dominant lever is the fine-tune regime, not the data source.** Gentle
+adaptation from the converged `div_epoch6` (low LR, few epochs) lifts micro-F
+**0.505 → ~0.62** for *both* data sources — a +0.115 jump. Head-to-head in that
+regime, **real A2MD (0.624) and synthetic mixing (0.620) are a tie** (synthetic is
+even marginally higher on macro). An earlier draft of this section claimed real
+data "beats synthetic ~3:1 (+0.119)" — that was a **regime confound** (real
+*fine-tune* vs synthetic *from-scratch*) and is **retracted**; the real-vs-synthetic
+effect, properly controlled, is ≈0.
 
-Crucially, **recall rose to 0.69 while precision also rose** — real data pushed the
-P/R frontier *outward*, which is exactly the "recover the recall drop" that tuning
-the synthetic SNR could not do (Follow-up 2: synthetic tuning only *slid* the
-frontier). This is the cleanest confirmation of the data-first thesis to date: the
-bottleneck is **real labelled data**, and 4.4h of it beats the entire synthetic
-augmentation effort.
+Why does the *same* synthetic mixing that overfit from-scratch (0.505, Follow-up 2)
+now reach 0.620? Because the gentle fine-tune regime never over-trains on the
+synthetic distribution — it adapts the already-general model a little, rather than
+letting it memorize MUSDB seams over 8 from-scratch epochs. The regime *fixes* the
+sim-to-real overfitting that Follow-up 2 diagnosed.
+
+Two real (if modest) edges for real data remain: it reaches the tie with **~4.5×
+fewer segments** (7.8k vs 35k — more data-efficient), and it holds **higher recall**
+(0.69 vs 0.64) at slightly lower precision. Both models push the P/R frontier well
+past the from-scratch +mix (P 0.49 / R 0.52). The OOD optimum is early for both
+(real ep2, synthetic ep3) then declines.
 
 Caveats: (1) **scheme 3 only** — fine-tuning on 3-class A2MD made the model forget
 toms/cymbals (scheme-5 TT 0.000, CY 0.083, macro 0.389); recoverable by co-training
-with E-GMD's 5-class labels (next step). (2) Still **0.17 micro below the floor** —
-real data helps a lot but more is needed (dist0p20 = 537 clips/~12h, ADTOF
-self-build, RBMA-13 exact labels, more capacity). (3) Fine-tune-from-checkpoint vs
-+mix-from-scratch is a regime mismatch, but the +0.119 clearance is far too large
-to be a forgetting artifact. **No synthesis pivot is warranted**: real data
-decisively works, so the path is *more* real data + co-training, not manufacturing
-data.
+with E-GMD's 5-class labels. (2) Still **~0.17 micro below the floor**. (3) The
+synthetic fine-tune used more (E-GMD+MUSDB) segments than A2MD; matched-data and
+co-training comparisons are the natural follow-ups.
+
+**Revised reading for the "do we pivot to synthesis?" question:** *more* favorable
+to synthesis, not less. Synthetic mixing, used in the right (fine-tune) regime,
+**equals** our scarce real data on transfer — and synthetic is infinitely scalable.
+So synthesis is re-validated as a co-equal lever, and the likely best path is
+**hybrid** (real to anchor + for efficiency, synthetic for scale), both via gentle
+fine-tuning, with realism improvements (Zehren-style) on the synthetic side.
 
 ## Reproduce
 
@@ -257,5 +270,12 @@ uv run python scripts/train.py --dataset a2md --root datasets/a2md/a2md_public -
     --init-from checkpoints/egmd_seq2seq_div_epoch6.pt --epochs 8 --batch-size 32 \
     --num-workers 8 --lr 1e-4 --out checkpoints/egmd_a2md_ft.pt
 uv run python scripts/eval_ood_sweep.py --checkpoints "checkpoints/egmd_a2md_ft_epoch*.pt" \
+    --dataset mdb --root datasets/MDBDrums --scheme 3 --max-len 192
+# Regime control: fine-tune the SAME checkpoint on synthetic mixing (isolates real-vs-synthetic)
+uv run python scripts/train.py --dataset egmd --root datasets/e-gmd --split train \
+    --shuffle-seed 0 --limit 2000 --init-from checkpoints/egmd_seq2seq_div_epoch6.pt \
+    --accompaniment-dir datasets/musdb_accompaniment --aug-prob 0.7 \
+    --epochs 4 --batch-size 32 --num-workers 8 --lr 1e-4 --out checkpoints/egmd_synth_ft.pt
+uv run python scripts/eval_ood_sweep.py --checkpoints "checkpoints/egmd_synth_ft_epoch*.pt" \
     --dataset mdb --root datasets/MDBDrums --scheme 3 --max-len 192
 ```
